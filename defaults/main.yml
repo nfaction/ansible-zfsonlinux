@@ -1,0 +1,9 @@
+---
+# defaults file for ansible-zfsonlinux
+
+import_pool: false
+
+create_pool: false
+create_filesystems: false
+
+enable_zfs_mod: false

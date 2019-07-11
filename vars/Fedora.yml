@@ -1,0 +1,8 @@
+---
+
+zfs_install:
+  - 'http://download.zfsonlinux.org/fedora/zfs-release.fc{{ ansible_distribution_major_version }}.noarch.rpm'
+
+zfs_packages:
+  - kernel-devel
+  - zfs

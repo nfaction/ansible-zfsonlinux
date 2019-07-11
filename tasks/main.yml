@@ -1,0 +1,129 @@
+---
+# tasks file for ansible-zfsonlinux
+
+- name: gather os specific variables
+  include_vars: "{{ item }}"
+  with_first_found:
+    - "{{ ansible_distribution }}-{{ ansible_distribution_major_version}}.yml"
+    - "{{ ansible_distribution }}.yml"
+    - "{{ ansible_os_family }}.yml"
+  tags:
+    - vars
+
+# Notes:
+#   * New kABI-tracking kmod: https://github.com/zfsonlinux/zfs/wiki/RHEL-%26-CentOS
+#   * Fix for busted dkms: https://medium.com/@hongseungwoo/centos7-zfs-127662b6d42f#.ymtxtpibw
+
+- name: detect whether zfs is installed
+  shell: modprobe zfs
+  register: zfs_kmod_status
+  ignore_errors: yes
+
+- debug: var=zfs_kmod_status
+
+- block:
+
+    - name: install apt repository
+      apt_repository:
+        repo: "{{ item }}"
+        state: present
+        filename: zfsonlinux
+      with_items: "{{ apt_repos }}"
+      when:
+        - ansible_os_family == "Debian"
+
+    - name: update cache for apt
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when:
+        - ansible_os_family == "Debian"
+
+    - name: install all zfs dependencies
+      package:
+        name: '{{ item }}'
+        state: latest
+      with_items:
+        - '{{ zfs_install }}'
+
+    - name: install gpg
+      shell: gpg --quiet --with-fingerprint /etc/pki/rpm-gpg/RPM-GPG-KEY-zfsonlinux
+      when:
+        - ansible_os_family == "RedHat"
+
+    - name: enable kABI-tracking kmod
+      ini_file:
+        dest: /etc/yum.repos.d/zfs.repo
+        section: '{{ item.value.name }}'
+        option: enabled
+        value: '{{ item.value.enabled }}'
+        backup: yes
+        no_extra_spaces: yes
+      with_dict:
+        zfs:
+          name: zfs
+          enabled: 1
+          # enabled: 0
+        zfs_kmod:
+          name: zfs-kmod
+          enabled: 0
+          # enabled: 1
+      when:
+        - ansible_os_family == "RedHat"
+
+    - name: install zfs
+      package:
+        name: '{{ item }}'
+        state: latest
+      with_items: "{{ zfs_packages }}"
+
+    - name: run systemd updates
+      shell: systemctl preset zfs-import-cache zfs-import-scan zfs-mount zfs-share zfs-zed zfs.target
+      when:
+        - ansible_os_family == "RedHat"
+
+  when: "'FATAL' in zfs_kmod_status.stderr"
+
+- name: enable zfs
+  modprobe:
+    name: zfs
+    state: present
+  when: enable_zfs_mod | bool
+  tags:
+    - zpool
+
+- name: check to see if pool has been imported
+  shell: zpool status | grep pool | cut -f 4 -d ' '
+  changed_when: false
+  register: zpool_status
+  when:
+    - import_pool | bool
+  tags:
+    - zpool
+
+- name: import pool
+  shell: zpool import {{ ZFS.POOL_NAME }}
+  register: zfs_import
+  ignore_errors: yes
+  when:
+    - import_pool | bool
+    - ZFS.POOL_NAME not in zpool_status.stdout
+  tags:
+    - zpool
+
+- name: create pool
+  shell: "zpool create -f {{ ZFS.POOL_NAME }} {{ ZFS.RAID_TYPE }} {{ ZFS.DISKS | join(' ') }}"
+  when:
+    - create_pool | bool
+  tags:
+    - zpool
+
+- name: create zfs file systems
+  zfs:
+    name: '{{ ZFS.POOL_NAME }}/{{ item }}'
+    state: present
+  with_items: '{{ ZFS.FILESYSTEMS }}'
+  when:
+    - create_filesystems | bool
+  tags:
+    - zpool
