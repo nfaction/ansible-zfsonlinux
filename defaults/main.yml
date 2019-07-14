@@ -7,3 +7,18 @@ create_pool: false
 create_filesystems: false
 
 enable_zfs_mod: false
+
+zfs_pool_name: tank
+zfs_raid_type: raidz1
+zfs_disks: []
+zfs_filesystems: []
+
+use_zfs_scrubber_service: true
+
+zfs_templates:
+  - name: template zfs-scrub.timer
+    src: zfs-scrub.timer.j2
+    dest: /etc/systemd/system/zfs-scrub@.timer
+  - name: template zfs-scrub@.service
+    src: zfs-scrub.service.j2
+    dest: /etc/systemd/system/zfs-scrub@.service

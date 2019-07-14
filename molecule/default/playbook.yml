@@ -4,4 +4,4 @@
   vars: []
   # os_vars_dir: ../../../../group_vars/operating-systems
   roles:
-    - role: ansible-x0-vnc
+    - role: ansible-zfsonlinux

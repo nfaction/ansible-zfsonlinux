@@ -4,7 +4,7 @@
 - name: gather os specific variables
   include_vars: "{{ item }}"
   with_first_found:
-    - "{{ ansible_distribution }}-{{ ansible_distribution_major_version}}.yml"
+    - "{{ ansible_distribution }}-{{ ansible_distribution_major_version }}.yml"
     - "{{ ansible_distribution }}.yml"
     - "{{ ansible_os_family }}.yml"
   tags:
@@ -14,15 +14,23 @@
 #   * New kABI-tracking kmod: https://github.com/zfsonlinux/zfs/wiki/RHEL-%26-CentOS
 #   * Fix for busted dkms: https://medium.com/@hongseungwoo/centos7-zfs-127662b6d42f#.ymtxtpibw
 
+- name: install all zfs dependencies
+  package:
+    name: '{{ item }}'
+    state: present
+  with_items:
+    - "{{ zfs_install }}"
+
 - name: detect whether zfs is installed
   shell: modprobe zfs
   register: zfs_kmod_status
-  ignore_errors: yes
+  changed_when: false
+  failed_when: false
 
 - debug: var=zfs_kmod_status
 
-- block:
-
+- name: install zfs and kmods
+  block:
     - name: install apt repository
       apt_repository:
         repo: "{{ item }}"
@@ -34,20 +42,14 @@
 
     - name: update cache for apt
       apt:
-        update_cache: yes
+        update_cache: true
         cache_valid_time: 3600
       when:
         - ansible_os_family == "Debian"
 
-    - name: install all zfs dependencies
-      package:
-        name: '{{ item }}'
-        state: latest
-      with_items:
-        - '{{ zfs_install }}'
-
     - name: install gpg
       shell: gpg --quiet --with-fingerprint /etc/pki/rpm-gpg/RPM-GPG-KEY-zfsonlinux
+      changed_when: false
       when:
         - ansible_os_family == "RedHat"
 
@@ -57,8 +59,8 @@
         section: '{{ item.value.name }}'
         option: enabled
         value: '{{ item.value.enabled }}'
-        backup: yes
-        no_extra_spaces: yes
+        backup: true
+        no_extra_spaces: true
       with_dict:
         zfs:
           name: zfs
@@ -67,22 +69,23 @@
         zfs_kmod:
           name: zfs-kmod
           enabled: 0
-          # enabled: 1
       when:
         - ansible_os_family == "RedHat"
 
     - name: install zfs
       package:
         name: '{{ item }}'
-        state: latest
-      with_items: "{{ zfs_packages }}"
+        state: present
+      with_items:
+        - "{{ zfs_packages }}"
 
     - name: run systemd updates
       shell: systemctl preset zfs-import-cache zfs-import-scan zfs-mount zfs-share zfs-zed zfs.target
+      changed_when: false
       when:
         - ansible_os_family == "RedHat"
 
-  when: "'FATAL' in zfs_kmod_status.stderr"
+  when: "'FATAL' in zfs_kmod_status.stderr or zfs_kmod_status.rc == 1"
 
 - name: enable zfs
   modprobe:
@@ -102,17 +105,18 @@
     - zpool
 
 - name: import pool
-  shell: zpool import {{ ZFS.POOL_NAME }}
+  shell: zpool import {{ zfs_pool_name }}
+  changed_when: false
   register: zfs_import
-  ignore_errors: yes
   when:
     - import_pool | bool
-    - ZFS.POOL_NAME not in zpool_status.stdout
+    - zfs_pool_name not in zpool_status.stdout
   tags:
     - zpool
 
 - name: create pool
-  shell: "zpool create -f {{ ZFS.POOL_NAME }} {{ ZFS.RAID_TYPE }} {{ ZFS.DISKS | join(' ') }}"
+  shell: "zpool create -f {{ zfs_pool_name }} {{ zfs_raid_type }} {{ zfs_disks | join(' ') }}"
+  changed_when: false
   when:
     - create_pool | bool
   tags:
@@ -120,10 +124,34 @@
 
 - name: create zfs file systems
   zfs:
-    name: '{{ ZFS.POOL_NAME }}/{{ item }}'
+    name: '{{ zfs_pool_name }}/{{ item }}'
     state: present
-  with_items: '{{ ZFS.FILESYSTEMS }}'
+  with_items:
+    - "{{ zfs_filesystems }}"
   when:
     - create_filesystems | bool
   tags:
     - zpool
+
+- name: template configuration files
+  template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0644') }}"
+  with_items:
+    - "{{ zfs_templates }}"
+  when:
+    - '{{ item.when | default(true) }}'
+  tags:
+    - template-configs
+
+- name: start zfs scrubber service
+  systemd:
+    name: "zfs-scrub@{{ zfs_pool_name }}.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+  when:
+    - use_zfs_scrubber_service | bool
