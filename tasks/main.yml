@@ -36,7 +36,7 @@
         repo: "{{ item }}"
         state: present
         filename: zfsonlinux
-      with_items: "{{ apt_repos }}"
+      with_items: "{{ zfs_apt_repos }}"
       when:
         - ansible_os_family == "Debian"
 
@@ -85,7 +85,7 @@
       when:
         - ansible_os_family == "RedHat"
 
-  when: "'FATAL' in zfs_kmod_status.stderr or zfs_kmod_status.rc == 1"
+  when: "'FATAL' in zfs_kmod_status.stderr or zfs_kmod_status.rc == 1 or force_install | bool"
 
 - name: enable zfs
   modprobe:
