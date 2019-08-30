@@ -2,6 +2,7 @@
 
 zfs_install:
   - kmod
+  - dpkg-dev
   - linux-headers-amd64
   # - 'linux-headers-{{ ansible_kernel }}'
 
